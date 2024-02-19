@@ -7,6 +7,59 @@ use super::Connection;
 use crate::{raw, RawError};
 
 #[cfg(feature = "ble-sec")]
+pub struct NumericComparisonReply {
+    conn: ManuallyDrop<Connection>,
+}
+
+#[cfg(feature = "ble-sec")]
+impl Drop for NumericComparisonReply {
+    fn drop(&mut self) {
+        if let Err(_err) = unsafe { self.finalize(false) } {
+            warn!("sd_ble_gap_auth_key_reply err {:?}", _err);
+        }
+    }
+}
+
+#[cfg(feature = "ble-sec")]
+impl NumericComparisonReply {
+    pub(crate) fn new(conn: Connection) -> Self {
+        Self {
+            conn: ManuallyDrop::new(conn),
+        }
+    }
+
+    pub fn reply(mut self, accept: bool) -> Result<(), RawError> {
+        let res = unsafe { self.finalize(accept) };
+        core::mem::forget(self); // Prevent Drop from finalizing a second time
+        res
+    }
+
+    /// # Safety
+    ///
+    /// This method must be called exactly once
+    unsafe fn finalize(&mut self, accept: bool) -> Result<(), RawError> {
+        let res = if let Some(conn_handle) = self.conn.handle() {
+            let ret = raw::sd_ble_gap_auth_key_reply(
+                conn_handle,
+                if accept {
+                    raw::BLE_GAP_AUTH_KEY_TYPE_PASSKEY
+                } else {
+                    raw::BLE_GAP_AUTH_KEY_TYPE_NONE
+                } as u8,
+                core::ptr::null(),
+            );
+            RawError::convert(ret)
+        } else {
+            Err(RawError::InvalidState)
+        };
+
+        // Since conn is ManuallyDrop, we must drop it here
+        ManuallyDrop::drop(&mut self.conn);
+        res
+    }
+}
+
+#[cfg(feature = "ble-sec")]
 pub struct PasskeyReply {
     conn: ManuallyDrop<Connection>,
 }

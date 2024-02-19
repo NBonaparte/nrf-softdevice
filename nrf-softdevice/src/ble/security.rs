@@ -1,5 +1,5 @@
 use crate::ble::gap::default_security_params;
-use crate::ble::replies::{OutOfBandReply, PasskeyReply};
+use crate::ble::replies::{NumericComparisonReply, OutOfBandReply, PasskeyReply};
 use crate::ble::types::{EncryptionInfo, IdentityKey, MasterId, SecurityMode};
 use crate::ble::Connection;
 use crate::raw;
@@ -45,6 +45,22 @@ pub trait SecurityHandler {
     /// Return `true` to request man-in-the-middle protection
     fn request_mitm_protection(&self, _conn: &Connection) -> bool {
         false
+    }
+
+    /// Returns `true` if the device can support Secure Connections.
+    /// [`set_secret`][Self::set_secret], [`calc_public_key`][Self::calc_public_key], and [`calc_shared_secret`][Self::calc_shared_secret]
+    /// must be implemented.
+    fn supports_sc(&self, _conn: &Connection) -> bool {
+        false
+    }
+
+    /// Allow the user to confirm if the passkeys displayed on central and peripheral devices
+    /// match.
+    ///
+    /// Must be implemented if [`io_capabilities()`][Self::io_capabilities] is one of `DisplayOnly`, `DisplayYesNo`, or `KeyboardDisplay`.
+    /// and Secure Connection is used.
+    fn compare_passkey(&self, _reply: NumericComparisonReply) {
+        panic!("SecurityHandler::compare_passkey is not implemented");
     }
 
     /// Display `passkey` to the user for confirmation on the remote device.
@@ -126,5 +142,34 @@ pub trait SecurityHandler {
         }
 
         sec_params
+    }
+
+    #[cfg(feature = "ble-sec")]
+    /// Sets the secret (or private key) for Secure Connections.
+    /// This should call an RNG function (e.g. RNG peripheral) to produce a random value.
+    /// Input range should be 1..=n-1 (what is n?)
+    /// The endianness of the return value does not matter, but make sure it is consistent with how it is used in [`calc_public_key`][Self::calc_public_key] (as `secret`).
+    fn set_secret(&self) -> [u8; 32] {
+        let mut secret = [0; 32];
+        secret[31] = 1;
+        secret
+    }
+
+    #[cfg(feature = "ble-sec")]
+    /// Calculates the Secure Connection (Elliptic-Curve Diffie-Hellman) public key from secret.
+    /// This should call a p256 implementation.
+    /// The return value should be little endian. Since it is actually both X and Y packed into one
+    /// array, both would need to be reversed individually (0-31, 32-63).
+    fn calc_public_key(&self, _secret: &[u8; 32]) -> [u8; 64] {
+        [0; 64]
+    }
+
+    #[cfg(feature = "ble-sec")]
+    /// Calculates the Secure Connection shared secret using the device's own secret and the peer's
+    /// public key.
+    /// This should call a p256 implementation.
+    /// `peer_public_key` is little endian, and the return value should be little endian.
+    fn calc_shared_secret(&self, _own_secret: &[u8; 32], _peer_public_key: &[u8; 64]) -> [u8; 32] {
+        [0; 32]
     }
 }

@@ -188,6 +188,9 @@ pub(crate) struct EncryptionState {
     pub own_enc_key: raw::ble_gap_enc_key_t,
     pub peer_enc_key: raw::ble_gap_enc_key_t,
     pub peer_id: raw::ble_gap_id_key_t,
+    pub own_secret: [u8; 32],
+    pub own_pub_key: raw::ble_gap_lesc_p256_pk_t,
+    pub peer_pub_key: raw::ble_gap_lesc_p256_pk_t,
 }
 
 #[cfg(feature = "ble-sec")]
@@ -198,6 +201,9 @@ const NEW_GAP_ENC_KEY: raw::ble_gap_enc_key_t = raw::ble_gap_enc_key_t {
     },
     master_id: raw::ble_gap_master_id_t { ediv: 0, rand: [0; 8] },
 };
+
+#[cfg(feature = "ble-sec")]
+const NEW_GAP_LESC_P256_KEY: raw::ble_gap_lesc_p256_pk_t = raw::ble_gap_lesc_p256_pk_t { pk: [0; 64] };
 
 #[cfg(feature = "ble-sec")]
 const NEW_GAP_ID_KEY: raw::ble_gap_id_key_t = raw::ble_gap_id_key_t {
@@ -214,6 +220,9 @@ const NEW_ENCRYPTION_STATE: EncryptionState = EncryptionState {
     own_enc_key: NEW_GAP_ENC_KEY,
     peer_enc_key: NEW_GAP_ENC_KEY,
     peer_id: NEW_GAP_ID_KEY,
+    own_secret: [0; 32],
+    own_pub_key: NEW_GAP_LESC_P256_KEY,
+    peer_pub_key: NEW_GAP_LESC_P256_KEY,
 };
 
 // We could make the public Connection type simply hold the softdevice's conn_handle.
@@ -361,13 +370,13 @@ impl ConnectionState {
                 p_enc_key: &mut self.security.own_enc_key,
                 p_id_key: core::ptr::null_mut(),
                 p_sign_key: core::ptr::null_mut(),
-                p_pk: core::ptr::null_mut(),
+                p_pk: &mut self.security.own_pub_key,
             },
             keys_peer: raw::ble_gap_sec_keys_t {
                 p_enc_key: &mut self.security.peer_enc_key,
                 p_id_key: &mut self.security.peer_id,
                 p_sign_key: core::ptr::null_mut(),
-                p_pk: core::ptr::null_mut(),
+                p_pk: &mut self.security.peer_pub_key,
             },
         };
         #[cfg(not(feature = "ble-sec"))]
@@ -510,7 +519,11 @@ impl Connection {
         handler: &'static dyn SecurityHandler,
     ) -> Result<Self, OutOfConnsError> {
         let conn = Self::new(conn_handle, role, peer_address, conn_params)?;
-        conn.with_state(|state| state.security.handler = Some(handler));
+        conn.with_state(|state| {
+            state.security.own_secret = handler.set_secret();
+            state.security.own_pub_key.pk = handler.calc_public_key(&state.security.own_secret);
+            state.security.handler = Some(handler)
+        });
         Ok(conn)
     }
 

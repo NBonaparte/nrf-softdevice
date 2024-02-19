@@ -200,8 +200,20 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
                     &keyset,
                 );
 
+<<<<<<< HEAD
                 if let Err(_err) = RawError::convert(ret) {
                     warn!("sd_ble_gap_sec_params_reply err {:?}", _err);
+=======
+                #[cfg(feature = "ble-sec")]
+                if let Some(handler) = state.security.handler {
+                    sec_params.set_io_caps(handler.io_capabilities().to_io_caps());
+                    sec_params.set_mitm(peer_params.mitm());
+                    if let Some(conn) = Connection::from_handle(gap_evt.conn_handle) {
+                        sec_params.set_bond(handler.can_bond(&conn) as u8);
+                        sec_params.set_oob(handler.can_recv_out_of_band(&conn) as u8);
+                        sec_params.set_lesc(handler.supports_sc(&conn) as u8 & peer_params.lesc());
+                    }
+>>>>>>> d80162b (feat(security): add secure connection support and example)
                 }
             } else {
                 warn!("Received SEC_PARAMS_REQUEST with an invalid connection handle");
@@ -209,7 +221,6 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
         }
         raw::BLE_GAP_EVTS_BLE_GAP_EVT_PASSKEY_DISPLAY => {
             let params = &gap_evt.params.passkey_display;
-            debug_assert_eq!(params.match_request(), 0);
             trace!(
                 "on_passkey_display passkey={}",
                 core::str::from_utf8_unchecked(&params.passkey)
@@ -217,7 +228,11 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
             #[cfg(feature = "ble-sec")]
             connection::with_state_by_conn_handle(gap_evt.conn_handle, |state| {
                 if let Some(handler) = state.security.handler {
-                    handler.display_passkey(&params.passkey)
+                    handler.display_passkey(&params.passkey);
+                    if params.match_request() == 1 {
+                        Connection::from_handle(gap_evt.conn_handle)
+                            .map(|conn| handler.compare_passkey(NumericComparisonReply::new(conn)));
+                    }
                 }
             });
         }
@@ -251,6 +266,29 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
 
                 if let Err(_err) = RawError::convert(ret) {
                     warn!("sd_ble_gap_auth_key_reply err {:?}", _err);
+                }
+            }
+        }
+        #[cfg(feature = "ble-sec")]
+        raw::BLE_GAP_EVTS_BLE_GAP_EVT_LESC_DHKEY_REQUEST => {
+            let params = &gap_evt.params.lesc_dhkey_request;
+            let pk = &(*params.p_pk_peer).pk;
+            trace!(
+                "on_lesc_dhkey_request, p_pk_peer={:?}, oobd_req={}",
+                pk,
+                params.oobd_req()
+            );
+            if let Some(shared_secret) = connection::with_state_by_conn_handle(gap_evt.conn_handle, |state| {
+                state
+                    .security
+                    .handler
+                    .map(|handler| handler.calc_shared_secret(&state.security.own_secret, pk))
+            }) {
+                let dhkey = raw::ble_gap_lesc_dhkey_t { key: shared_secret };
+                let ret = raw::sd_ble_gap_lesc_dhkey_reply(gap_evt.conn_handle, &dhkey);
+
+                if let Err(_err) = RawError::convert(ret) {
+                    warn!("sd_ble_gap_lesc_dhkey_reply err {:?}", _err);
                 }
             }
         }
@@ -368,7 +406,11 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
             }
         }
         // BLE_GAP_EVTS_BLE_GAP_EVT_KEY_PRESSED (LESC central pairing)
+<<<<<<< HEAD
         // BLE_GAP_EVTS_BLE_GAP_EVT_LESC_DHKEY_REQUEST (LESC key calculation)
+=======
+        // BLE_GAP_EVTS_BLE_GAP_EVT_SEC_REQUEST (Peripheral-initiated security request)
+>>>>>>> d80162b (feat(security): add secure connection support and example)
         // BLE_GAP_EVTS_BLE_GAP_EVT_RSSI_CHANGED
         // BLE_GAP_EVTS_BLE_GAP_EVT_SCAN_REQ_REPORT
         // BLE_GAP_EVTS_BLE_GAP_EVT_QOS_CHANNEL_SURVEY_REPORT
