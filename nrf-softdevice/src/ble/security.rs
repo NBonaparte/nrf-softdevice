@@ -147,7 +147,7 @@ pub trait SecurityHandler {
     #[cfg(feature = "ble-sec")]
     /// Sets the secret (or private key) for Secure Connections.
     /// This should call an RNG function (e.g. RNG peripheral) to produce a random value.
-    /// Input range should be 1..=n-1 (what is n?)
+    /// Input range should be 1..=2^255.
     /// The endianness of the return value does not matter, but make sure it is consistent with how it is used in [`calc_public_key`][Self::calc_public_key] (as `secret`).
     fn set_secret(&self) -> [u8; 32] {
         let mut secret = [0; 32];

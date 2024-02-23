@@ -520,7 +520,9 @@ impl Connection {
     ) -> Result<Self, OutOfConnsError> {
         let conn = Self::new(conn_handle, role, peer_address, conn_params)?;
         conn.with_state(|state| {
+            trace!("setting secret");
             state.security.own_secret = handler.set_secret();
+            trace!("creating public key");
             state.security.own_pub_key.pk = handler.calc_public_key(&state.security.own_secret);
             state.security.handler = Some(handler)
         });

@@ -6,9 +6,14 @@ mod example_common;
 
 use core::cell::{Cell, RefCell};
 use core::mem;
+use core::num::NonZeroU32;
 
+use crypto_bigint::{nlimbs, Encoding, NonZero, RandomMod, Uint, U256};
 use defmt::{info, *};
 use embassy_executor::Spawner;
+// use embassy_nrf::pac;
+use embassy_nrf::interrupt;
+use embassy_time::Timer;
 use nrf_softdevice::ble::advertisement_builder::{
     Flag, LegacyAdvertisementBuilder, LegacyAdvertisementPayload, ServiceList, ServiceUuid16,
 };
@@ -20,8 +25,9 @@ use nrf_softdevice::ble::{
     gatt_server, peripheral, Connection, EncryptionInfo, IdentityKey, MasterId, NumericComparisonReply, SecurityMode,
     Uuid,
 };
-use nrf_softdevice::{raw, Softdevice};
+use nrf_softdevice::{random_bytes, raw, Softdevice};
 use p256_cortex_m4::{PublicKey, SecretKey, SharedSecret};
+use rand_core::{CryptoRng, RngCore};
 use static_cell::StaticCell;
 
 const BATTERY_SERVICE: Uuid = Uuid::new_16(0x180f);
@@ -42,6 +48,7 @@ struct Peer {
 pub struct Bonder {
     peer: Cell<Option<Peer>>,
     sys_attrs: RefCell<heapless::Vec<u8, 62>>,
+    pub secret: [u8; 32],
 }
 
 impl Default for Bonder {
@@ -49,7 +56,34 @@ impl Default for Bonder {
         Bonder {
             peer: Cell::new(None),
             sys_attrs: Default::default(),
+            secret: [0; 32],
         }
+    }
+}
+
+struct SoftDeviceRng<'a>(&'a Softdevice);
+
+impl CryptoRng for SoftDeviceRng<'_> {}
+impl RngCore for SoftDeviceRng<'_> {
+    fn next_u32(&mut self) -> u32 {
+        let mut buf = [0_u8; 4];
+        self.fill_bytes(&mut buf);
+        u32::from_le_bytes(buf)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut buf = [0_u8; 8];
+        self.fill_bytes(&mut buf);
+        u64::from_le_bytes(buf)
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        random_bytes(self.0, dest).unwrap()
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        // mehhhh
+        random_bytes(self.0, dest).map_err(|_| NonZeroU32::new(1).unwrap().into())
     }
 }
 
@@ -125,8 +159,10 @@ impl SecurityHandler for Bonder {
 
         unwrap!(set_sys_attrs(conn, attrs));
     }
-    // TODO set_secret
-    //
+
+    fn set_secret(&self) -> [u8; 32] {
+        self.secret
+    }
 
     // LESC requires some p256 implementation. Here we use `p256-cortex-m4` which is a crate that
     // wraps optimized assembly.
@@ -229,6 +265,19 @@ impl gatt_server::Server for Server {
 async fn main(spawner: Spawner) -> ! {
     info!("Hello World!");
 
+    let mut config = embassy_nrf::config::Config::default();
+    // embassy_nrf::interrupt::USBD.set_priority(interrupt::Priority::P2);
+    // embassy_nrf::interrupt::POWER_CLOCK.set_priority(interrupt::Priority::P2);
+    // embassy_nrf::interrupt::SPIM2_SPIS2_SPI2.set_priority(interrupt::Priority::P2);
+    config.gpiote_interrupt_priority = interrupt::Priority::P2;
+    config.time_interrupt_priority = interrupt::Priority::P2;
+    embassy_nrf::init(config);
+    // let clock: pac::CLOCK = unsafe { core::mem::transmute(()) };
+    //
+    // // info!("Enabling ext hfosc...");
+    // clock.tasks_hfclkstart.write(|w| unsafe { w.bits(1) });
+    // while clock.events_hfclkstarted.read().bits() != 1 {}
+
     let config = nrf_softdevice::Config {
         clock: Some(raw::nrf_clock_lf_cfg_t {
             source: raw::NRF_CLOCK_LF_SRC_RC as u8,
@@ -262,6 +311,15 @@ async fn main(spawner: Spawner) -> ! {
     };
 
     let sd = Softdevice::enable(&config);
+
+    Timer::after_secs(3).await;
+
+    // alternatively, keep generating until rng value < max value
+    let mut secret_gen = SoftDeviceRng(&sd);
+    let max_p256r1 = U256::from_be_hex("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
+    // TODO make sure secret is not 0
+    let secret = RandomMod::random_mod(&mut secret_gen, &NonZero::new(max_p256r1).unwrap()).to_be_bytes();
+
     let server = unwrap!(Server::new(sd));
     unwrap!(spawner.spawn(softdevice_task(sd)));
 
@@ -275,6 +333,7 @@ async fn main(spawner: Spawner) -> ! {
 
     static BONDER: StaticCell<Bonder> = StaticCell::new();
     let bonder = BONDER.init(Bonder::default());
+    bonder.secret = secret;
 
     loop {
         let config = peripheral::Config::default();
