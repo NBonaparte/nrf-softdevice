@@ -180,11 +180,21 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
                         #[cfg(not(feature = "ble-sec"))]
                         let sec_params = default_security_params();
                         #[cfg(feature = "ble-sec")]
-                        let sec_params = state
+                        let mut sec_params = state
                             .security
                             .handler
                             .map(|h| h.security_params(&conn))
                             .unwrap_or_else(default_security_params);
+                        #[cfg(feature = "ble-sec")]
+                        if let Some(handler) = state.security.handler {
+                            sec_params.set_io_caps(handler.io_capabilities().to_raw());
+                            sec_params.set_mitm(peer_params.mitm() & handler.request_mitm_protection(&conn) as u8);
+                            if let Some(conn) = Connection::from_handle(gap_evt.conn_handle) {
+                                sec_params.set_bond(handler.can_bond(&conn) as u8);
+                                sec_params.set_oob(handler.can_recv_out_of_band(&conn) as u8);
+                                sec_params.set_lesc(handler.supports_sc(&conn) as u8 & peer_params.lesc());
+                            }
+                        }
                         Some(sec_params)
                     } else {
                         None
@@ -200,20 +210,8 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
                     &keyset,
                 );
 
-<<<<<<< HEAD
                 if let Err(_err) = RawError::convert(ret) {
                     warn!("sd_ble_gap_sec_params_reply err {:?}", _err);
-=======
-                #[cfg(feature = "ble-sec")]
-                if let Some(handler) = state.security.handler {
-                    sec_params.set_io_caps(handler.io_capabilities().to_io_caps());
-                    sec_params.set_mitm(peer_params.mitm());
-                    if let Some(conn) = Connection::from_handle(gap_evt.conn_handle) {
-                        sec_params.set_bond(handler.can_bond(&conn) as u8);
-                        sec_params.set_oob(handler.can_recv_out_of_band(&conn) as u8);
-                        sec_params.set_lesc(handler.supports_sc(&conn) as u8 & peer_params.lesc());
-                    }
->>>>>>> d80162b (feat(security): add secure connection support and example)
                 }
             } else {
                 warn!("Received SEC_PARAMS_REQUEST with an invalid connection handle");
@@ -406,11 +404,6 @@ pub(crate) unsafe fn on_evt(ble_evt: *const raw::ble_evt_t) {
             }
         }
         // BLE_GAP_EVTS_BLE_GAP_EVT_KEY_PRESSED (LESC central pairing)
-<<<<<<< HEAD
-        // BLE_GAP_EVTS_BLE_GAP_EVT_LESC_DHKEY_REQUEST (LESC key calculation)
-=======
-        // BLE_GAP_EVTS_BLE_GAP_EVT_SEC_REQUEST (Peripheral-initiated security request)
->>>>>>> d80162b (feat(security): add secure connection support and example)
         // BLE_GAP_EVTS_BLE_GAP_EVT_RSSI_CHANGED
         // BLE_GAP_EVTS_BLE_GAP_EVT_SCAN_REQ_REPORT
         // BLE_GAP_EVTS_BLE_GAP_EVT_QOS_CHANNEL_SURVEY_REPORT
