@@ -11,7 +11,6 @@ use core::num::NonZeroU32;
 use crypto_bigint::{nlimbs, Encoding, NonZero, RandomMod, Uint, U256};
 use defmt::{info, *};
 use embassy_executor::Spawner;
-// use embassy_nrf::pac;
 use embassy_nrf::interrupt;
 use embassy_time::Timer;
 use nrf_softdevice::ble::advertisement_builder::{
@@ -82,8 +81,8 @@ impl RngCore for SoftDeviceRng<'_> {
     }
 
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        // mehhhh
-        random_bytes(self.0, dest).map_err(|_| NonZeroU32::new(1).unwrap().into())
+        // random::RandomError is not public so just put in a default error
+        random_bytes(self.0, dest).map_err(|_| NonZeroU32::new(rand_core::Error::CUSTOM_START).unwrap().into())
     }
 }
 
@@ -266,17 +265,9 @@ async fn main(spawner: Spawner) -> ! {
     info!("Hello World!");
 
     let mut config = embassy_nrf::config::Config::default();
-    // embassy_nrf::interrupt::USBD.set_priority(interrupt::Priority::P2);
-    // embassy_nrf::interrupt::POWER_CLOCK.set_priority(interrupt::Priority::P2);
-    // embassy_nrf::interrupt::SPIM2_SPIS2_SPI2.set_priority(interrupt::Priority::P2);
     config.gpiote_interrupt_priority = interrupt::Priority::P2;
     config.time_interrupt_priority = interrupt::Priority::P2;
     embassy_nrf::init(config);
-    // let clock: pac::CLOCK = unsafe { core::mem::transmute(()) };
-    //
-    // // info!("Enabling ext hfosc...");
-    // clock.tasks_hfclkstart.write(|w| unsafe { w.bits(1) });
-    // while clock.events_hfclkstarted.read().bits() != 1 {}
 
     let config = nrf_softdevice::Config {
         clock: Some(raw::nrf_clock_lf_cfg_t {
@@ -317,8 +308,10 @@ async fn main(spawner: Spawner) -> ! {
     // alternatively, keep generating until rng value < max value
     let mut secret_gen = SoftDeviceRng(&sd);
     let max_p256r1 = U256::from_be_hex("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
-    // TODO make sure secret is not 0
-    let secret = RandomMod::random_mod(&mut secret_gen, &NonZero::new(max_p256r1).unwrap()).to_be_bytes();
+    let mut secret = U256::ZERO;
+    while secret == U256::ZERO {
+        secret = RandomMod::random_mod(&mut secret_gen, &NonZero::new(max_p256r1).unwrap());
+    }
 
     let server = unwrap!(Server::new(sd));
     unwrap!(spawner.spawn(softdevice_task(sd)));
@@ -333,7 +326,7 @@ async fn main(spawner: Spawner) -> ! {
 
     static BONDER: StaticCell<Bonder> = StaticCell::new();
     let bonder = BONDER.init(Bonder::default());
-    bonder.secret = secret;
+    bonder.secret = secret.to_be_bytes();
 
     loop {
         let config = peripheral::Config::default();
